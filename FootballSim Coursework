@@ -1,0 +1,1076 @@
+import tkinter as tk
+from tkinter import messagebox
+import random
+import time
+import sqlite3
+from datetime import datetime
+
+conn = sqlite3.connect("football_sim.db")
+cursor = conn.cursor()
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS Teams(
+  TeamId INT PRIMARY KEY,
+  TeamName VARCHAR
+);
+""")
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS Players(
+  PlayerId INT PRIMARY KEY,
+  PlayerName VARCHAR,
+  Position VARCHAR,
+  TeamId INT,
+  AttackRating INT,
+  DefenceRating INT,
+  GoalThreat INT,
+FOREIGN KEY (TeamId)  REFERENCES Teams(TeamId)
+);
+""")
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS Matches(
+    match_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT,
+    home_team TEXT,
+    away_team TEXT,
+    home_team_goals INTEGER,
+    away_team_goals INTEGER
+)
+""")
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS TeamStats(
+    match_id INTEGER,
+    team TEXT,
+    possession INTEGER,
+    shots_on_target INTEGER,
+    shots_off_target INTEGER,
+    fouls INTEGER,
+    tackles INTEGER,
+    corners INTEGER,
+    FOREIGN KEY (match_id) REFERENCES Matches (match_id)
+)
+""")
+
+class MatchSimulator:
+    def __init__(self, app, home_team, away_team, home_lineup, away_lineup):
+        self.app = app
+        self.home_team = home_team
+        self.away_team = away_team
+        self.home_lineup = home_lineup
+        self.away_lineup = away_lineup
+        self.playing = True
+        self.minute = 0
+        self.time_of_half = 45
+        self.half = "first"
+        self.count = 0
+        self.added_time = 0
+
+    def stoppage_time(self):
+        if self.minute == 45:
+            self.added_time = random.randint(1, 5)
+        elif self.minute == 90:
+            self.added_time = random.randint(2, 10)
+        else:
+            self.added_time = 0
+        return f"{self.minute}' There will be a minimum of {self.added_time} mins of additional time"
+
+    def GetAction(self, selected_team, other_team, home_team, away_team, home_lineup, away_lineup):
+        global match_goals
+        match_goals = {}
+        def goal(team, selected_lineup):
+            CumulativeProbs = []
+            cumulative = 0
+            for player_name in selected_lineup:
+                player = player_name[0]
+                cursor.execute("SELECT PlayerName, GoalThreat FROM Players WHERE PlayerName = ?", (player,))
+                player = cursor.fetchone()
+                if player:
+                    goal_threat = player[1]
+                    cumulative += goal_threat
+                    CumulativeProbs.append((cumulative, player[0]))
+
+            rand_num = random.randint(1, cumulative)
+            for cumulative, player_name in CumulativeProbs:
+                if rand_num <= cumulative:
+                    rand_num2 = random.randint(1, 3)
+                    match_goals[team] = player_name
+                    print(match_goals)
+                    if rand_num2 == 1:
+                        return f"GOAL for {team} scored by {player_name}"
+                    elif rand_num2 == 2:
+                        return f"{player_name} scores a wonderful GOAL for {team}"
+                    else:
+                        return f"GOAL scored by {player_name} for {team}"
+
+
+        def tackle(team, selected_lineup, other_lineup):
+            CumulativeProbs = []
+            cumulative = 0
+            for player_data in selected_lineup:
+                player = player_data[0]
+                cursor.execute("SELECT PlayerName, DefenceRating, Position FROM Players WHERE PlayerName = ? AND Position != 'Goalkeeper'", (player,))
+                player = cursor.fetchone()
+                if player:
+                    tackle_threat = player[1]
+                    position = player[2]
+                    cumulative += tackle_threat
+                    CumulativeProbs.append((cumulative, player[0], position))
+
+            rand_num = random.randint(1, cumulative)
+            for cumulative, player_name, position in CumulativeProbs:
+                if rand_num <= cumulative:
+                    rand_num2 = random.randint(1, 3)
+                    players = []
+                    if position == "Defender":
+                        for player_data in other_lineup:
+                            player = player_data[0]
+                            player_position = player_data[1]
+                            if player_position == "Attacker" or player_position == "Midfielder":
+                                players.append(player)
+
+                    elif position == "Midfielder":
+                        for player_data in other_lineup:
+                            player = player_data[0]
+                            player_position = player_data[1]
+                            if player_position == "Midfielder" or player_position == "Attacker":
+                                players.append(player)
+
+                    elif position == "Attacker":
+                        for player_data in other_lineup:
+                            player = player_data[0]
+                            player_position = player_data[1]
+                            if player_position == "Defender" or player_position == "Midfielder":
+                                players.append(player)
+
+                    player_name2 = random.choice(players)
+                    rand_num2 = random.randint(1, 3)
+                    if rand_num2 == 1:
+                        return f"{player_name2} tackled by {player_name}"
+                    elif rand_num2 == 2:
+                        return f"{player_name} regains possession for {team}"
+                    else:
+                        return f"{player_name} wins the ball off {player_name2}"
+
+
+        def shot_on_target(team, selected_lineup, other_lineup):
+            CumulativeProbs = []
+            cumulative = 0
+            goalkeeper = None
+            for player_name in selected_lineup:
+                player = player_name[0]
+                cursor.execute("SELECT PlayerName, GoalThreat FROM Players WHERE PlayerName = ?", (player,))
+                player = cursor.fetchone()
+                if player:
+                    shot_threat = player[1]
+                    cumulative += shot_threat
+                    CumulativeProbs.append((cumulative, player[0]))
+
+            for player in other_lineup:
+                player_name = player[0]
+                position = player[1]
+                if position == "Goalkeeper":
+                    goalkeeper = player_name
+
+            rand_num = random.randint(1, cumulative)
+            for cumulative, player_name in CumulativeProbs:
+                if rand_num <= cumulative:
+                    rand_num2 = random.randint(1, 3)
+                    if rand_num2 == 1:
+                        return f"Shot by {player_name} but great save by {team}'s {goalkeeper}"
+                    elif rand_num2 == 2:
+                        return f"{player_name} shoots but it's straight at {goalkeeper}"
+                    else:
+                        return f"{goalkeeper} makes a wonderful save from {player_name} effort"
+
+        def shot_off_target(team, selected_lineup):
+            CumulativeProbs = []
+            cumulative = 0
+            for player_name in selected_lineup:
+                player = player_name[0]
+                cursor.execute("SELECT PlayerName, GoalThreat FROM Players WHERE PlayerName = ?", (player,))
+                player = cursor.fetchone()
+                if player:
+                    shot_threat = player[1]
+                    cumulative += shot_threat
+                    CumulativeProbs.append((cumulative, player[0]))
+
+            rand_num = random.randint(1, cumulative)
+            for cumulative, player_name in CumulativeProbs:
+                if rand_num <= cumulative:
+                    rand_num2 = random.randint(1,6)
+                    if rand_num2 == 1:
+                        rand_num2 = random.randint(1,3)
+                        if rand_num2 == 1:
+                            return f"{player_name}'s shot rattles off the bar"
+                        elif rand_num2 == 2:
+                            return f"Shot by {player_name} hits the outside of the post"
+                        else:
+                            return f"{team} so close to scoring as {player_name} hits the post"
+                    rand_num2 = random.randint(1, 3)
+                    if rand_num2 == 1:
+                        return f"Shot by {player_name} but just wide"
+                    elif rand_num2 == 2:
+                        return f"{player_name} shoots but it's well over the bar"
+                    else:
+                        return f"{team} with a great opportunity but {player_name} shoots off target"
+
+        def corner(team, selected_lineup):
+            return f"Corner for {team}"
+
+        def foul(other_team, selected_lineup, other_lineup):
+            CumulativeProbs = []
+            cumulative = 0
+            for player_data in selected_lineup:
+                player = player_data[0]
+                cursor.execute("SELECT PlayerName, DefenceRating, Position FROM Players WHERE PlayerName = ? AND Position != 'Goalkeeper'", (player,))
+                player = cursor.fetchone()
+                if player:
+                    tackle_threat = player[1]
+                    position = player[2]
+                    cumulative += tackle_threat
+                    CumulativeProbs.append((cumulative, player[0], position))
+
+            rand_num = random.randint(1, cumulative)
+            for cumulative, player_name, position in CumulativeProbs:
+                if rand_num <= cumulative:
+                    rand_num2 = random.randint(1, 3)
+                    players = []
+                    if position == "Defender":
+                        for player_data in other_lineup:
+                            player = player_data[0]
+                            player_position = player_data[1]
+                            if player_position == "Attacker" or player_position == "Midfielder":
+                                players.append(player)
+
+                    elif position == "Midfielder":
+                        for player_data in other_lineup:
+                            player = player_data[0]
+                            player_position = player_data[1]
+                            if player_position == "Midfielder" or player_position == "Attacker":
+                                players.append(player)
+
+                    elif position == "Attacker":
+                        for player_data in other_lineup:
+                            player = player_data[0]
+                            player_position = player_data[1]
+                            if player_position == "Defender" or player_position == "Midfielder":
+                                players.append(player)
+
+                    player_name2 = random.choice(players)
+                    rand_num2 = random.randint(1, 3)
+                    if rand_num2 == 1:
+                        return f"{player_name2} fouled by {player_name}"
+                    elif rand_num2 == 2:
+                        return f"{player_name2} wins a freekick for {other_team}"
+                    else:
+                        return f"{player_name} fouls {player_name2} freekick for {other_team}"
+
+
+        home_attack = []
+        home_defense = []
+
+        away_attack = []
+        away_defense = []
+
+        attacking_positions = ["Attacker", "Midfielder"]
+        defensive_positions = ["Defender", "Midfielder", "Goalkeeper"]
+
+        def player_ratings():
+            for player_name, player_position in home_lineup:
+                cursor.execute("SELECT AttackRating FROM Players WHERE PlayerName = ?", (player_name,))
+                attack_rating = cursor.fetchone()
+                home_attack.append(attack_rating[0])
+                cursor.execute("SELECT DefenceRating FROM Players WHERE PlayerName = ?", (player_name,))
+                defence_rating = cursor.fetchone()
+                home_defense.append(defence_rating[0])
+
+            for player_name, player_position in away_lineup:
+                cursor.execute("SELECT AttackRating FROM Players WHERE PlayerName = ?", (player_name,))
+                attack_rating = cursor.fetchone()
+                away_attack.append(attack_rating[0])
+                cursor.execute("SELECT DefenceRating FROM Players WHERE PlayerName = ?", (player_name,))
+                defence_rating = cursor.fetchone()
+                away_defense.append(defence_rating[0])
+
+        player_ratings()
+
+        def calc_ratings(x):
+            total = 0
+            num = 0
+            for rating in x:
+                num += 1
+                total += rating
+            overall_rating = round(total / num)
+            return overall_rating
+
+        home_attack_rating = calc_ratings(home_attack)
+        home_defense_rating = calc_ratings(home_defense)
+        away_attack_rating = calc_ratings(away_attack)
+        away_defense_rating = calc_ratings(away_defense)
+
+        def determine_action(selected_team, other_team, home_team, away_team, home_attack_rating, home_defense_rating, away_attack_rating, away_defense_rating):
+            average_goals = 3.28
+            average_shots = 27.6
+            average_fouls = 20.9
+            average_tackles = 31.2
+            average_corners = 10.15
+
+            if selected_team == home_team:
+                attack_rating = home_attack_rating
+                defense_rating = away_defense_rating
+            else:
+                attack_rating = away_attack_rating
+                defense_rating = home_defense_rating
+
+
+            goal_probability = (attack_rating / defense_rating) * average_goals
+            shot_on_probability = (attack_rating / defense_rating) * average_shots /3.2
+            shot_off_probability = (attack_rating / defense_rating) * average_shots *2/3
+            x = 100 - goal_probability - shot_on_probability - shot_off_probability
+            x = x/150
+            foul_probability = average_fouls * x
+            tackle_probability = average_tackles * x
+            corner_probability = average_corners * x
+            no_action_probability = 10
+
+            probabilities = [goal_probability, shot_on_probability,shot_off_probability, foul_probability, tackle_probability, corner_probability, no_action_probability]
+            total_probability = sum(probabilities)
+            probabilities = [p / total_probability for p in probabilities]
+
+            actions = ["Goal", "Shot_on_target", "Shot_off_target", "Foul", "Tackle", "Corner", "None"]
+
+            selected_action = random.choices(actions, probabilities)[0]
+
+            return selected_action, selected_team
+
+        resulting_action = determine_action(selected_team, other_team, home_team, away_team,home_attack_rating, home_defense_rating, away_attack_rating, away_defense_rating)
+        action = resulting_action[0]
+        team = resulting_action[1]
+
+        if selected_team == home_team:
+            other_team == away_team
+            selected_lineup = home_lineup
+            other_lineup = away_lineup
+        else:
+            other_team == home_team
+            selected_lineup = away_lineup
+            other_lineup = home_lineup
+
+        last_action = None
+
+        if action == "Goal":
+            result = goal(selected_team, selected_lineup)
+            last_action = "Goal"
+        elif action == "Shot_on_target":
+            result = shot_on_target(selected_team, selected_lineup, other_lineup)
+            last_action = "Shot_on_target"
+        elif action == "Shot_off_target":
+            result = shot_off_target(selected_team, selected_lineup)
+            last_action = "Shot_off_target"
+        elif action == "Foul":
+            result = foul(other_team, selected_lineup, other_lineup)
+            last_action = "Foul"
+        elif action == "Tackle":
+            result = tackle(selected_team, selected_lineup, other_lineup)
+            last_action = "Tackle"
+        elif action == "Corner":
+            result = corner(selected_team, selected_lineup)
+            last_action = "Corner"
+        else:
+            result = ""
+
+        return result, last_action, selected_team
+
+
+    def simulate(self, text_widget):
+        global match_stats_data
+        match_stats_data = {'home': {"Goals": 0, "Shots": 0, "Fouls": 0, "Tackles": 0, "Corners": 0, "Shots_on_target": 0, "Shots_off_target" :0,},
+                      'away': {"Goals": 0, "Shots": 0, "Fouls": 0, "Tackles": 0, "Corners": 0, "Shots_on_target": 0, "Shots_off_target" :0,}}
+
+        while self.playing:
+            try:
+                while pause_game is True:
+                    pass
+            except:
+                pass
+
+            self.app.update()
+            time.sleep(0.3)
+            self.minute += 1
+            self.time_of_half -= 1
+            teams = [self.home_team, self.away_team]
+            selected_team = random.choice(teams)
+            if selected_team == self.home_team:
+                other_team = self.away_team
+            else:
+                other_team = self.home_team
+            action_result = self.GetAction(selected_team, other_team, self.home_team, self.away_team, self.home_lineup, self.away_lineup)
+            action = action_result[0]
+            last_action = action_result[1]
+
+            if self.minute == 1 and self.half == "first":
+                rand = random.randint(1,2)
+                if rand == 1:
+                    self.kick = self.home_team
+                else:
+                    self.kick = self.away_team
+                text_widget.insert(tk.END, f"{self.kick} kick off the match\n")
+                text_widget.update_idletasks()
+            if self.minute == 45 or self.minute == 90:
+                stoppage = self.stoppage_time()
+                text_widget.insert(tk.END, f"{stoppage}\n")
+                text_widget.update_idletasks()
+                self.time_of_half += self.added_time
+
+            if self.time_of_half == 0:
+                if self.half == "first":
+                    text_widget.insert(tk.END, "Half time\n")
+                    text_widget.insert(tk.END, f"{self.home_team} {match_stats_data['home']['Goals']} - {match_stats_data['away']['Goals']} {self.away_team}\n\n")
+                    text_widget.update_idletasks()
+                    self.half = "second"
+                    self.time_of_half = 45
+                    self.minute = 46
+                    self.count = 0
+                else:
+                    text_widget.insert(tk.END, f"End of match - {self.home_team} {match_stats_data['home']['Goals']} - {match_stats_data['away']['Goals']} {self.away_team}\n")
+                    text_widget.update_idletasks()
+                    self.playing = False
+                    break
+
+            if (self.half == "first" and self.minute >= 45) or (self.half == "second" and self.minute >= 90):
+                self.count += 1
+                if self.half == "first":
+                    self.injury_time = f"{45}+{self.count}'"
+                else:
+                    self.injury_time = f"{90}+{self.count}'"
+                text_widget.insert(tk.END, f"{self.injury_time} {action}\n")
+            else:
+                text_widget.insert(tk.END, f"{self.minute}' {action}\n")
+
+            def last_action_update(last_action, selected_team, match_stats_data):
+                if last_action == "Goal":
+                    if selected_team == self.home_team:
+                        match_stats_data['home']['Goals'] += 1
+                        match_stats_data['home']['Shots'] += 1
+                        match_stats_data['home']['Shots_on_target'] += 1
+                    elif selected_team == self.away_team:
+                        match_stats_data['away']['Goals'] += 1
+                        match_stats_data['away']['Shots'] += 1
+                        match_stats_data['away']['Shots_on_target'] += 1
+                    text_widget.insert(tk.END, f"{self.home_team} {match_stats_data['home']['Goals']} - {match_stats_data['away']['Goals']} {self.away_team}\n")
+                    text_widget.see(tk.END)
+                    text_widget.update_idletasks()
+                    time.sleep(2)
+
+                if last_action == "Shot_on_target":
+                    if selected_team == self.home_team:
+                        match_stats_data['home']['Shots_on_target'] += 1
+                        match_stats_data['home']['Shots'] += 1
+                    elif selected_team == self.away_team:
+                        match_stats_data['away']['Shots_on_target'] += 1
+                        match_stats_data['away']['Shots'] += 1
+
+                if last_action == "Shot_off_target":
+                    if selected_team == self.home_team:
+                        match_stats_data['home']['Shots_off_target'] += 1
+                        match_stats_data['home']['Shots'] += 1
+                    elif selected_team == self.away_team:
+                        match_stats_data['away']['Shots_off_target'] += 1
+                        match_stats_data['away']['Shots'] += 1
+
+                if last_action == "Foul":
+                    if selected_team == self.home_team:
+                        match_stats_data['home']['Fouls'] += 1
+                    elif selected_team == self.away_team:
+                        match_stats_data['away']['Fouls'] += 1
+
+                if last_action == "Tackle":
+                    if selected_team == self.home_team:
+                        match_stats_data['home']['Tackles'] += 1
+                    elif selected_team == self.away_team:
+                        match_stats_data['away']['Tackles'] += 1
+
+                if last_action == "Corner":
+                    if selected_team == self.home_team:
+                        match_stats_data['home']['Corners'] += 1
+                    elif selected_team == self.away_team:
+                        match_stats_data['away']['Corners'] += 1
+
+            last_action_update(last_action, selected_team, match_stats_data)
+
+            text_widget.see(tk.END)
+            text_widget.update_idletasks()
+            time.sleep(0.6)
+
+
+class App(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.geometry("500x500")
+        self.frames = {}
+        self.frames["Main Menu"] = MenuFrame(self)
+        self.frames["Pick Teams"] = PickTeamsFrame(self)
+        self.frames["Home Team Selection"] = HomeSelectionFrame(self)
+        self.frames["Away Team Selection"] = AwaySelectionFrame(self)
+        self.frames["Match Simulation"] = MatchSimulatorFrame(self)
+        self.frames["Home Team Substitutions"] = HomeSubstitutionsFrame(self)
+        self.frames["Away Team Substitutions"] = AwaySubstitutionsFrame(self)
+        self.frames["Match Stats"] = MatchStatsFrame(self)
+        self.frames["Previous Match Stats"] = PreviousStatsFrame(self)
+        for frame in self.frames.values():
+            frame.grid(row=0, column=0, sticky="nsew")
+        self.ShowFrame("Main Menu")
+
+    def ShowFrame(self, PageName):
+        frame = self.frames[PageName]
+        self.title(PageName)
+        frame.tkraise()
+
+
+class MenuFrame(tk.Frame):
+    def __init__(self, container):
+        super().__init__(container)
+        self.Menu = tk.Label(self, text="Menu Page")
+        self.Menu.grid(row=0, column=0)
+        self.SingleMatchLabel = tk.Button(self, text="Single Match", command=lambda: container.ShowFrame("Pick Teams"))
+        self.SingleMatchLabel.grid(row=1, column=0)
+        self.PlayersStatsLabel = tk.Button(self, text="Previous Match Stats", command=lambda: container.ShowFrame("Previous Match Stats"))
+        self.PlayersStatsLabel.grid(row=2, column=0)
+
+
+class PickTeamsFrame(tk.Frame):
+    def __init__(self, container):
+        super().__init__(container)
+        self.container = container
+        self.home_team = None
+        self.away_team = None
+
+        self.label = tk.Label(self, text="Select Home Team")
+        self.label.grid(row=0, column=0)
+
+        cursor.execute("SELECT TeamName FROM Teams")
+        teams = cursor.fetchall()
+
+        for index, team in enumerate(teams):
+            team = teams[index][0]
+            button = tk.Button(self, text=team, command=lambda t=team: self.select_home_team(t))
+            button.grid(row=index + 1, column=0, padx=5, pady=5)
+
+        self.label_away = tk.Label(self, text="Select Away Team")
+        self.label_away.grid(row=0, column=1)
+
+        for index, team in enumerate(teams):
+            team = teams[index][0]
+            button = tk.Button(self, text=team, command=lambda t=team: self.select_away_team(t))
+            button.grid(row=index + 1, column=1, padx=5, pady=5)
+
+        self.confirm_btn = tk.Button(self, text="Confirm Selection", command=self.check_confirm)
+        self.confirm_btn.grid(row=len(teams) + 2, column=0, columnspan=2, pady=10)
+        self.BackLabel = tk.Button(self, text="Back To Menu", command=lambda: container.ShowFrame("Main Menu"))
+        self.BackLabel.grid(row=len(teams)+3, column=0)
+
+    def select_home_team(self, team):
+        self.home_team = team
+
+    def select_away_team(self, team):
+        self.away_team = team
+
+    def set_teams(self, home, away):
+        global home_team
+        global away_team
+        home_team = home
+        away_team = away
+
+    def check_confirm(self):
+        if self.home_team == self.away_team:
+            messagebox.showerror("Selection Error", "Please select 2 different teams.")
+        elif self.home_team and self.away_team:
+            self.container.frames["Pick Teams"].set_teams(self.home_team, self.away_team)
+            messagebox.showinfo("Selection Confirmed", f"Home Team: {self.home_team}\nAway Team: {self.away_team}")
+            self.container.frames["Match Simulation"].get_teams(self.home_team, self.away_team)
+            self.container.ShowFrame("Home Team Selection")
+            self.container.frames["Home Team Selection"].HomeLineup(self.home_team)
+            self.container.frames["Away Team Selection"].AwayLineup(self.away_team)
+        else:
+            messagebox.showerror("Selection Error", "Please select both a home and an away team.")
+
+
+class HomeSelectionFrame(tk.Frame):
+    def __init__(self, container):
+        super().__init__(container)
+        self.container = container
+
+        self.startingLabel = tk.Label(self, text="Starting lineup")
+        self.startingLabel.grid(row=1, column=0)
+
+        self.starting_listbox = tk.Listbox(self, height=15, width=25)
+        self.starting_listbox.grid(row=2, column=0)
+
+        self.benchLabel = tk.Label(self, text="Bench")
+        self.benchLabel.grid(row=1, column=1)
+
+        self.bench_listbox = tk.Listbox(self, height=15, width=25)
+        self.bench_listbox.grid(row=2, column=1)
+
+        self.AwaySelectionPage = tk.Button(self, text="Away Team Selection", command=lambda: container.ShowFrame("Away Team Selection"))
+        self.AwaySelectionPage.grid(row=3, column=0)
+
+        self.MatchSim = tk.Button(self, text="Match Simulation Page", command=self.StartMatch)
+        self.MatchSim.grid(row=4, column=0)
+        self.MatchSim.config(state=tk.DISABLED)
+
+        self.SubOut = tk.Button(self, text="Sub Player Out", command=self.HomeSubOut)
+        self.SubOut.grid(row=5, column=0)
+
+        self.SubIn = tk.Button(self, text="Sub Player In", command=self.HomeSubIn)
+        self.SubIn.grid(row=5, column=1)
+
+    def HomeLineup(self, home_team):
+        cursor.execute("SELECT TeamId FROM Teams WHERE TeamName = ?", (home_team,))
+        teamId = cursor.fetchone()
+
+        cursor.execute("SELECT PlayerName, Position FROM Players WHERE TeamId = ?", (teamId[0],))
+        players = cursor.fetchall()
+
+        self.starting_listbox.delete(0, tk.END)
+        self.bench_listbox.delete(0, tk.END)
+
+        self.HomePlaying = []
+        self.HomeBench = []
+        counter = 0
+
+        for player in players:
+            if counter < 11:
+                self.starting_listbox.insert(tk.END, f"{player[0]} - {player[1]}")
+                self.HomePlaying.append(player)
+            else:
+                self.bench_listbox.insert(tk.END, f"{player[0]} - {player[1]}")
+                self.HomeBench.append(player)
+            counter += 1
+        self.container.frames["Match Simulation"].get_home_lineup(self.HomePlaying)
+        self.CheckLineup()
+
+    def HomeFormation(self):
+        self.Def = 0
+        self.Mid = 0
+        self.Att = 0
+        for player in self.HomePlaying:
+            if player[1] == "Defender":
+                self.Def += 1
+            if player[1] == "Midfielder":
+                self.Mid += 1
+            if player[1] == "Attacker":
+                self.Att += 1
+        self.formation = f"Current formation: {self.Def} - {self.Mid} - {self.Att}"
+        self.formation_label = tk.Label(self, text = self.formation, font=("Arial", 11))
+        self.formation_label.grid(row=0, column=0)
+
+    def HomeSubOut(self):
+        selected_index = self.starting_listbox.curselection()
+        if selected_index:
+            selected_player = self.HomePlaying.pop(selected_index[0])
+            self.starting_listbox.delete(selected_index)
+            self.bench_listbox.insert(tk.END, f"{selected_player[0]} - {selected_player[1]}")
+            self.HomeBench.append(selected_player)
+            self.container.frames["Match Simulation"].get_home_lineup(self.HomePlaying)
+            self.CheckLineup()
+
+    def HomeSubIn(self):
+        selected_index = self.bench_listbox.curselection()
+        if selected_index:
+            selected_player = self.HomeBench.pop(selected_index[0])
+            self.bench_listbox.delete(selected_index)
+            self.starting_listbox.insert(tk.END, f"{selected_player[0]} - {selected_player[1]}")
+            self.HomePlaying.append(selected_player)
+            self.container.frames["Match Simulation"].get_home_lineup(self.HomePlaying)
+            self.CheckLineup()
+
+    def CheckLineup(self):
+        self.HomeFormation()
+        self.counter = 0
+        for player in self.HomePlaying:
+            if player[1] == "Goalkeeper":
+                self.counter += 1
+        if len(self.HomePlaying) == 11 and self.counter == 1:
+            self.MatchSim.config(state=tk.NORMAL)
+            self.AwaySelectionPage.config(state=tk.NORMAL)
+        else:
+            self.MatchSim.config(state=tk.DISABLED)
+            self.AwaySelectionPage.config(state=tk.DISABLED)
+
+    def StartMatch(self):
+        self.container.ShowFrame("Match Simulation")
+
+
+class AwaySelectionFrame(tk.Frame):
+    def __init__(self, container):
+        super().__init__(container)
+        self.container = container
+
+        self.startingLabel = tk.Label(self, text="Starting lineup")
+        self.startingLabel.grid(row=1, column=0)
+
+        self.starting_listbox = tk.Listbox(self, height=15, width=25)
+        self.starting_listbox.grid(row=2, column=0)
+
+        self.benchLabel = tk.Label(self, text="Bench")
+        self.benchLabel.grid(row=1, column=1)
+
+        self.bench_listbox = tk.Listbox(self, height=15, width=25)
+        self.bench_listbox.grid(row=2, column=1)
+
+        self.HomeSelectionPage = tk.Button(self, text="Home Team Selection", command=lambda: container.ShowFrame("Home Team Selection"))
+        self.HomeSelectionPage.grid(row=3, column=0)
+
+        self.MatchSim = tk.Button(self, text="Match Simulation Page", command=self.StartMatch)
+        self.MatchSim.grid(row=4, column=0)
+        self.MatchSim.config(state=tk.DISABLED)
+
+        self.SubOut = tk.Button(self, text="Sub Player Out", command=self.AwaySubOut)
+        self.SubOut.grid(row=5, column=0)
+
+        self.SubIn = tk.Button(self, text="Sub Player In", command=self.AwaySubIn)
+        self.SubIn.grid(row=5, column=1)
+
+    def AwayLineup(self, away_team):
+        cursor.execute("SELECT TeamId FROM Teams WHERE TeamName = ?", (away_team,))
+        teamId = cursor.fetchone()
+
+        cursor.execute("SELECT PlayerName, Position FROM Players WHERE TeamId = ?", (teamId[0],))
+        players = cursor.fetchall()
+
+        self.starting_listbox.delete(0, tk.END)
+        self.bench_listbox.delete(0, tk.END)
+
+        self.AwayPlaying = []
+        self.AwayBench = []
+        counter = 0
+
+        for player in players:
+            if counter < 11:
+                self.starting_listbox.insert(tk.END, f"{player[0]} - {player[1]}")
+                self.AwayPlaying.append(player)
+            else:
+                self.bench_listbox.insert(tk.END, f"{player[0]} - {player[1]}")
+                self.AwayBench.append(player)
+            counter += 1
+
+        self.container.frames["Match Simulation"].get_away_lineup(self.AwayPlaying)
+        self.CheckLineup()
+
+    def AwayFormation(self):
+        self.Def = 0
+        self.Mid = 0
+        self.Att = 0
+        for player in self.AwayPlaying:
+            if player[1] == "Defender":
+                self.Def += 1
+            if player[1] == "Midfielder":
+                self.Mid += 1
+            if player[1] == "Attacker":
+                self.Att += 1
+        self.formation = f"Current formation: {self.Def} - {self.Mid} - {self.Att}"
+        self.formation_label = tk.Label(self, text = self.formation, font=("Arial", 11))
+        self.formation_label.grid(row=0, column=0)
+
+    def AwaySubOut(self):
+        selected_index = self.starting_listbox.curselection()
+        if selected_index:
+            selected_player = self.AwayPlaying.pop(selected_index[0])
+            self.starting_listbox.delete(selected_index)
+            self.bench_listbox.insert(tk.END, f"{selected_player[0]} - {selected_player[1]}")
+            self.AwayBench.append(selected_player)
+            self.container.frames["Match Simulation"].get_away_lineup(self.AwayPlaying)
+            self.CheckLineup()
+
+    def AwaySubIn(self):
+        selected_index = self.bench_listbox.curselection()
+        if selected_index:
+            selected_player = self.AwayBench.pop(selected_index[0])
+            self.bench_listbox.delete(selected_index)
+            self.starting_listbox.insert(tk.END, f"{selected_player[0]} - {selected_player[1]}")
+            self.AwayPlaying.append(selected_player)
+            self.container.frames["Match Simulation"].get_away_lineup(self.AwayPlaying)
+            self.CheckLineup()
+
+    def CheckLineup(self):
+        self.AwayFormation()
+        self.counter = 0
+        for player in self.AwayPlaying:
+            if player[1] == "Goalkeeper":
+                self.counter += 1
+        if len(self.AwayPlaying) == 11 and self.counter == 1:
+            self.MatchSim.config(state=tk.NORMAL)
+            self.HomeSelectionPage.config(state=tk.NORMAL)
+        else:
+            self.MatchSim.config(state=tk.DISABLED)
+            self.HomeSelectionPage.config(state=tk.DISABLED)
+
+    def StartMatch(self):
+        self.container.ShowFrame("Match Simulation")
+
+
+class MatchSimulatorFrame(tk.Frame):
+    def __init__(self, container):
+        super().__init__(container)
+        self.container = container
+        self.home_team = None
+        self.away_team = None
+
+        self.text_widget = tk.Text(self, height=20, width=65)
+        self.text_widget.pack()
+
+        self.start_button = tk.Button(self, text="Start Match", command=self.start_match)
+        self.start_button.pack()
+
+        self.sub_button = tk.Button(self, text="Subs", command= self.make_subs)
+        self.sub_button.pack()
+        self.sub_button.config(state="disabled")
+
+        self.StatsLabel = tk.Button(self, text="Match Stats", command=lambda: container.ShowFrame("Match Stats"))
+        self.StatsLabel.pack()
+        self.StatsLabel.config(state="disabled")
+
+
+    def make_subs(self):
+        global pause_game
+        pause_game = True
+        self.container.ShowFrame("Home Team Substitutions")
+
+    def get_teams(self, home_team, away_team):
+        self.home_team = home_team
+        self.away_team = away_team
+
+    def get_home_lineup(self, home_lineup):
+        self.home_lineup = home_lineup
+
+    def get_away_lineup(self, away_lineup):
+        self.away_lineup = away_lineup
+
+    def start_match(self):
+        if self.home_team and self.away_team and self.home_lineup and self.away_lineup:
+            self.sub_button.config(state="normal")
+            match = MatchSimulator(self.container, self.home_team, self.away_team, self.home_lineup, self.away_lineup)
+            self.text_widget.delete('1.0', tk.END)
+            match.simulate(self.text_widget)
+            self.StatsLabel.config(state="normal")
+            self.update_stats_page()
+        else:
+            messagebox.showerror("Team Selection Error", "Home team and away team must be selected.")
+
+    def update_stats_page(self):
+        self.container.frames["Match Stats"].update_stats(match_stats_data)
+
+
+class HomeSubstitutionsFrame(tk.Frame):
+    def __init__(self, container):
+        super().__init__(container)
+        self.back = tk.Button(self, text="Back", command=lambda: container.ShowFrame("Match Simulation"))
+        self.back.pack()
+        pause_game = False
+
+
+class AwaySubstitutionsFrame(tk.Frame):
+    pass
+
+
+class MatchStatsFrame(tk.Frame):
+    def __init__(self, container):
+        super().__init__(container)
+        self.container = container
+        self.stats_label = tk.Label(self, text="Match Stats")
+        self.stats_label.pack()
+        self.stats_text = tk.Text(self, height=20, width=65)
+        self.stats_text.pack()
+        self.back_label = tk.Button(self, text="Back To Simulation", command=lambda: container.ShowFrame("Match Simulation"))
+        self.back_label.pack()
+
+    def update_stats(self, match_stats_data):
+        self.stats_text.delete('1.0', tk.END)
+
+        def calc_xg(team):
+            on = match_stats_data[team]['Shots_on_target']
+            off = match_stats_data[team]['Shots_off_target']
+
+            xg_total = 0
+            for num in range(on):
+                xg_value = random.uniform(0.2,0.35)
+                xg_total += xg_value
+
+            for num in range(off):
+                xg_value = random.uniform(0.03,0.08)
+                xg_total += xg_value
+
+            return round(xg_total,2)
+
+        home_xg = calc_xg('home')
+        away_xg = calc_xg('away')
+
+        def calc_possession():
+            home_actions = match_stats_data['home']['Goals'] + match_stats_data['home']['Shots'] + match_stats_data['home']['Tackles'] - match_stats_data['home']['Fouls']
+            away_actions = match_stats_data['away']['Goals'] + match_stats_data['away']['Shots'] + match_stats_data['away']['Tackles'] - match_stats_data['away']['Fouls']
+            total_actions = home_actions + away_actions
+            home_possession = (home_actions / total_actions) * 100
+            home_possession = int(home_possession)
+            away_possession = 100 - home_possession
+
+            return home_possession, away_possession
+
+        possession = calc_possession()
+        home_possession = possession[0]
+        away_possession = possession[1]
+
+        x = ""
+        self.stats_text.insert(tk.END, f"{x:<15}{home_team:<20}{away_team}\n\n")
+        stats = [
+            ("Goals", match_stats_data['home']['Goals'], match_stats_data['away']['Goals']),
+            ("Possession %", home_possession, away_possession),
+            ("Shots", match_stats_data['home']['Shots'], match_stats_data['away']['Shots']),
+            ("Shot on target", match_stats_data['home']['Shots_on_target'], match_stats_data['away']['Shots_on_target']),
+            ("Shot off target", match_stats_data['home']['Shots_off_target'], match_stats_data['away']['Shots_off_target']),
+            ("xG", home_xg, away_xg),
+            ("Fouls", match_stats_data['home']['Fouls'], match_stats_data['away']['Fouls']),
+            ("Tackles", match_stats_data['home']['Tackles'], match_stats_data['away']['Tackles']),
+            ("Corners", match_stats_data['home']['Corners'], match_stats_data['away']['Corners']),
+        ]
+
+        for stat_name, home_value, away_value in stats:
+            self.stats_text.insert(tk.END, f"{stat_name:<23}{home_value:<20}{away_value}\n")
+
+
+        def collect_match_data():
+            now = datetime.now()
+            match_data = {
+                "date": now.strftime("%Y-%m-%d"),
+                "home_team": home_team,
+                "away_team": away_team,
+                "home_team_goals": match_stats_data['home']['Goals'],
+                "away_team_goals": match_stats_data['away']['Goals'],
+                "team_stats": {
+                    "home": {
+                        "possession": home_possession,
+                        "shots": match_stats_data['home']['Shots'],
+                        "shots_on_target": match_stats_data['home']['Shots_on_target'],
+                        "shots_off_target": match_stats_data['home']['Shots_off_target'],
+                        "fouls": match_stats_data['home']['Fouls'],
+                        "tackles": match_stats_data['home']['Tackles'],
+                        "corners": match_stats_data['home']['Corners']
+                    },
+                    "away": {
+                        "possession": away_possession,
+                        "shots": match_stats_data['away']['Shots'],
+                        "shots_on_target": match_stats_data['away']['Shots_on_target'],
+                        "shots_off_target": match_stats_data['away']['Shots_off_target'],
+                        "fouls": match_stats_data['away']['Fouls'],
+                        "tackles": match_stats_data['away']['Tackles'],
+                        "corners": match_stats_data['away']['Corners']
+                    }
+                }
+            }
+            return match_data
+
+        def save_match_results(match_data):
+            self.save_button.config(state="disabled")
+            cursor.execute('''
+                INSERT INTO Matches (date, home_team, away_team, home_team_goals, away_team_goals)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (match_data['date'], match_data['home_team'], match_data['away_team'],
+                  match_data['home_team_goals'], match_data['away_team_goals']))
+
+            match_id = cursor.lastrowid
+            for team in ["home", "away"]:
+                cursor.execute('''
+                    INSERT INTO TeamStats (match_id, team, possession, shots_on_target, shots_off_target, fouls, tackles, corners)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (match_id, team,
+                      match_data['team_stats'][team]['possession'],
+                      match_data['team_stats'][team]['shots_on_target'],
+                      match_data['team_stats'][team]['shots_off_target'],
+                      match_data['team_stats'][team]['fouls'],
+                      match_data['team_stats'][team]['tackles'],
+                      match_data['team_stats'][team]['corners']))
+
+            conn.commit()
+
+
+        def get_all_matches():
+            cursor.execute('SELECT * FROM Matches')
+            matches = cursor.fetchall()
+
+            return matches
+
+        data = collect_match_data()
+        self.save_button = tk.Button(self, text="Save Match Data", command=lambda: save_match_results(data))
+        self.save_button.pack()
+        self.save_button.config(state="normal")
+
+        # Example of how to print match data
+        matches = get_all_matches()
+        for match in matches:
+            print(f"Match ID: {match[0]}, Date: {match[1]}, Home Team: {match[2]}, Away Team: {match[3]}, Final Score: {match[4]} - {match[5]}")
+
+
+class PreviousStatsFrame(tk.Frame):
+    def __init__(self, container):
+        super().__init__(container)
+
+        self.conn = sqlite3.connect('football_sim.db')
+        self.cursor = self.conn.cursor()
+
+        team_label = tk.Label(self, text="Enter Team Name:")
+        team_label.pack(side=tk.LEFT, padx=5)
+
+        # Entry widget (textbox) for user input
+        self.team_entry = tk.Entry(self)
+        self.team_entry.pack(side=tk.LEFT, padx=5)
+
+        # Button to confirm input
+        confirm_button = tk.Button(self, text="Confirm", command=self.check_team_exists)
+        confirm_button.pack(side=tk.LEFT, padx=5)
+
+        # Label to display results
+        self.result_label = tk.Label(self, text="")
+        self.result_label.pack(pady=10)
+
+    # Method to handle the button click and check if team exists
+    def check_team_exists(self):
+        team_name = self.team_entry.get().strip()  # Get the input from the Entry box
+
+        # Check if team exists in the Teams table
+        query = "SELECT * FROM Teams WHERE TeamName = ?"
+        self.cursor.execute(query, (team_name,))
+        team = self.cursor.fetchone()
+
+        if team:
+            # If team exists, fetch recent games
+            self.display_recent_games(team_name)
+        else:
+            # If team does not exist, show error
+            self.result_label.config(text=f"Team '{team_name}' not found.", fg="red")
+
+    # Method to display the recent games of the team
+    def display_recent_games(self, team_name):
+        # Fetch recent games for the given team from the Matches table
+        query = '''
+            SELECT date, home_team, away_team, home_team_goals, away_team_goals
+            FROM Matches
+            WHERE home_team = ? OR away_team = ?
+            ORDER BY date DESC LIMIT 5
+        '''
+        self.cursor.execute(query, (team_name, team_name))
+        recent_games = self.cursor.fetchall()
+
+        if recent_games:
+            result_text = f"Recent games for {team_name}:\n"
+            for game in recent_games:
+                date, home, away, home_goals, away_goals = game
+                result_text += f"{date}: {home} {home_goals} - {away_goals} {away}\n"
+            self.result_label.config(text=result_text, fg="black")
+        else:
+            self.result_label.config(text=f"No recent games found for {team_name}.", fg="red")
+
+
+myApp = App()
+myApp.mainloop()
